@@ -1,120 +1,128 @@
+import streamlit as st
 import pandas as pd
-from pathlib import Path
+from io import BytesIO
 
-# =====================================
-# CONFIGURAZIONE FILE
-# =====================================
+st.title("Filtro articoli Amazon")
 
-FILE_AMAZON = "Offerte attive amazon.xlsx"
-FILE_FORNITORE = "File fornitore input.xlsx"
+# Upload file
+file_amazon = st.file_uploader(
+    "Carica il file Amazon",
+    type=["xlsx"]
+)
 
-OUTPUT_FILTRATO = "File_fornitore_filtrato.xlsx"
-OUTPUT_PRESENTI = "Articoli_gia_presenti_amazon.xlsx"
+file_fornitore = st.file_uploader(
+    "Carica il file Fornitore",
+    type=["xlsx"]
+)
 
-# =====================================
-# CONTROLLI ESISTENZA FILE
-# =====================================
+if file_amazon and file_fornitore:
 
-if not Path(FILE_AMAZON).exists():
-    raise FileNotFoundError(f"File non trovato: {FILE_AMAZON}")
+    # ==========================
+    # LETTURA FILE
+    # ==========================
 
-if not Path(FILE_FORNITORE).exists():
-    raise FileNotFoundError(f"File non trovato: {FILE_FORNITORE}")
+    amazon = pd.read_excel(file_amazon, dtype=str)
+    fornitore = pd.read_excel(file_fornitore, dtype=str)
 
-print("Lettura file Excel...")
+    # ==========================
+    # CONTROLLO COLONNE
+    # ==========================
 
-# =====================================
-# LETTURA FILE
-# =====================================
+    if "seller-sku" not in amazon.columns:
+        st.error(
+            "Nel file Amazon non esiste la colonna 'seller-sku'"
+        )
+        st.stop()
 
-amazon = pd.read_excel(FILE_AMAZON, dtype=str)
-fornitore = pd.read_excel(FILE_FORNITORE, dtype=str)
+    if "CodiceArticolo" not in fornitore.columns:
+        st.error(
+            "Nel file Fornitore non esiste la colonna 'CodiceArticolo'"
+        )
+        st.stop()
 
-# =====================================
-# CONTROLLO COLONNE
-# =====================================
+    # ==========================
+    # ESTRAZIONE CODICI AMAZON
+    # ==========================
 
-if "seller-sku" not in amazon.columns:
-    raise ValueError(
-        "Nel file Amazon non esiste la colonna 'seller-sku'"
+    codici_amazon = (
+        amazon["seller-sku"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.split("_")
+        .str[-1]
     )
 
-if "CodiceArticolo" not in fornitore.columns:
-    raise ValueError(
-        "Nel file Fornitore non esiste la colonna 'CodiceArticolo'"
+    codici_amazon = set(codici_amazon)
+
+    # ==========================
+    # NORMALIZZAZIONE FORNITORE
+    # ==========================
+
+    fornitore["CodiceArticolo"] = (
+        fornitore["CodiceArticolo"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
     )
 
-# =====================================
-# ESTRAZIONE CODICI AMAZON
-# DFL_100144 -> 100144
-# =====================================
+    # ==========================
+    # FILTRAGGIO
+    # ==========================
 
-codici_amazon = (
-    amazon["seller-sku"]
-    .fillna("")
-    .astype(str)
-    .str.strip()
-    .str.split("_")
-    .str[-1]
-)
+    mask_presenti = fornitore["CodiceArticolo"].isin(codici_amazon)
 
-# Elimina eventuali duplicati
-codici_amazon = set(codici_amazon)
+    articoli_presenti = fornitore[mask_presenti].copy()
+    articoli_da_caricare = fornitore[~mask_presenti].copy()
 
-# =====================================
-# NORMALIZZAZIONE CODICI FORNITORE
-# =====================================
+    # ==========================
+    # REPORT
+    # ==========================
 
-fornitore["CodiceArticolo"] = (
-    fornitore["CodiceArticolo"]
-    .fillna("")
-    .astype(str)
-    .str.strip()
-)
+    st.success("Elaborazione completata")
 
-# =====================================
-# FILTRAGGIO
-# =====================================
+    st.write("### Report")
 
-mask_presenti = fornitore["CodiceArticolo"].isin(codici_amazon)
+    st.write(
+        {
+            "Articoli Amazon unici": len(codici_amazon),
+            "Articoli Fornitore": len(fornitore),
+            "Già presenti su Amazon": len(articoli_presenti),
+            "Da caricare": len(articoli_da_caricare),
+        }
+    )
 
-articoli_presenti = fornitore[mask_presenti].copy()
-articoli_da_caricare = fornitore[~mask_presenti].copy()
+    # ==========================
+    # GENERAZIONE FILE EXCEL
+    # ==========================
 
-# =====================================
-# SALVATAGGIO
-# =====================================
+    output_filtrato = BytesIO()
+    output_presenti = BytesIO()
 
-articoli_da_caricare.to_excel(
-    OUTPUT_FILTRATO,
-    index=False
-)
+    articoli_da_caricare.to_excel(
+        output_filtrato,
+        index=False
+    )
 
-articoli_presenti.to_excel(
-    OUTPUT_PRESENTI,
-    index=False
-)
+    articoli_presenti.to_excel(
+        output_presenti,
+        index=False
+    )
 
-# =====================================
-# REPORT
-# =====================================
+    # ==========================
+    # DOWNLOAD
+    # ==========================
 
-tot_amazon = len(codici_amazon)
-tot_fornitore = len(fornitore)
-tot_presenti = len(articoli_presenti)
-tot_da_caricare = len(articoli_da_caricare)
+    st.download_button(
+        label="📥 Scarica articoli da caricare",
+        data=output_filtrato.getvalue(),
+        file_name="File_fornitore_filtrato.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-print("\n======================================")
-print("REPORT FINALE")
-print("======================================")
-print(f"Articoli Amazon unici      : {tot_amazon:,}")
-print(f"Articoli Fornitore         : {tot_fornitore:,}")
-print(f"Già presenti su Amazon     : {tot_presenti:,}")
-print(f"Da caricare               : {tot_da_caricare:,}")
-print("======================================")
-
-print("\nFILE GENERATI:")
-print(f"✓ {OUTPUT_FILTRATO}")
-print(f"✓ {OUTPUT_PRESENTI}")
-
-print("\nOperazione completata.")
+    st.download_button(
+        label="📥 Scarica articoli già presenti",
+        data=output_presenti.getvalue(),
+        file_name="Articoli_gia_presenti_amazon.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
